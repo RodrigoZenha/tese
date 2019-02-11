@@ -16,8 +16,10 @@ bool Learning::configure(yarp::os::ResourceFinder &rf) {
     entropy = rf.check("entropy",Value("off")).asString().c_str();
     type = rf.check("type",Value("batch")).asString().c_str();
     aw = rf.check("aw",Value("off")).asString().c_str();
+    param = rf.check("param",Value("fixed")).asString().c_str();
 
 	printf("Learning Parameters: [Type] %s [Entropy] %s [Anti-Windup] %s.\n\n", type.c_str(), entropy.c_str(), aw.c_str());
+	printf("Estimation Parameters are : %s. \n\n", param.c_str());
 
 
 	// open all ports
@@ -78,6 +80,7 @@ bool Learning::configure(yarp::os::ResourceFinder &rf) {
 	}
 
 	Qt = 0.0015*eye(7,7); //Depend on number of DoF
+	//Qt = 0.017*eye(7,7); //Depend on number of DoF
 	Pd = 0.001*eye(7,7); //Used for AW (var_est -> Pd)
 	
 	//Rt = 0.000025*eye(7,7); //Depend on number of trials
@@ -95,6 +98,10 @@ bool Learning::configure(yarp::os::ResourceFinder &rf) {
 
 	u_bel = zeros(7);
 	var_bel = zeros(7,7);
+	
+	bias = zeros(16);
+	defineBias();
+
 
 	n_vector.resize(3);
 	aux = true;
@@ -104,10 +111,19 @@ bool Learning::configure(yarp::os::ResourceFinder &rf) {
     current_reading = reading; //number of readings provided by controller
     startControlFlag = false;
 
+    experiment=2;
+
     myfile = new std::ofstream();
-	myfile->open ("u_est.txt");
+	myfile->open ("u_est_1.txt");
 	*myfile << u_est.toString().c_str();
 	*myfile << "\n";
+
+	if (param == "slow"){
+		param_var = new std::ofstream();
+		param_var->open ("param_var_1.txt");
+		*param_var << bias.subVector(0,6).toString().c_str();
+		*param_var << "\n";
+	}
 }
 
 double Learning::getPeriod() {
@@ -211,7 +227,7 @@ bool Learning::updateModule() {
 		    
 
 		    	printf("u is %.5Le\n", u);
-		    	if(u >= 0){
+		    	if(u >= -0.2){
 		    		printf("Data is suficient to perform an estimation step!\n");		
 		    	    u_est = u_bel + K_gain*(err_exp - err); 
 		    	    var_est_ant = var_est;
@@ -250,6 +266,66 @@ bool Learning::updateModule() {
 		    reading = 1;
 
 		    current_reading = reading;
+
+		    if (reading_t == 60)
+		    {
+
+		    	reading_t = 0;
+		    	myfile->close();
+		    	param_var->close();
+
+		    	H_k = zeros(1,7); //Rows depend on number of trials, columns on number of DoF
+				err = zeros(1); //Depend on number of trials
+				err_exp = zeros(1);
+				Rt = 0.000025*eye(1,1); //Depend on number of trials
+
+	
+
+				Qt = 0.0015*eye(7,7); //Depend on number of DoF
+
+				//Estimation parameters
+				u_est = zeros(7);
+				//var_est = 0.03*eye(7,7);
+				var_est = 0.03*eye(7,7);
+				var_est_ant = var_est;
+
+				
+
+				u_bel = zeros(7);
+				var_bel = zeros(7,7);
+
+				defineBias(); //reset bias value
+
+				reading = 1; //number of readings between estimation spetps
+			    reading_t = 0; //total number of readings provided by controller
+			    current_reading = reading; //number of readings provided by controller
+						
+					 
+				std::ostringstream oss;
+
+				oss << "u_est_" << experiment;
+				oss << ".txt";
+				myfile->open (oss.str().c_str());
+				*myfile << u_est.toString().c_str();
+				*myfile << "\n";
+
+				if(param == "slow"){
+					std::ostringstream iss;
+
+					iss << "param_var_" << experiment;
+				 	iss << ".txt";
+					param_var->open (iss.str().c_str());
+					*param_var << bias.subVector(0,6).toString().c_str();
+				 	*param_var << "\n";
+				}
+
+				if (experiment == 16){
+				 	return false;
+				}
+
+				experiment++;
+
+		    }
 
 		}else if (type == "pbatch"){ //pbatch is online estimation with entropy evaluation + data incorporation
 
@@ -332,6 +408,12 @@ bool Learning::updateModule() {
 		
 		*myfile << u_est.toString().c_str();
 		*myfile << "\n";	
+
+		if(param == "slow"){
+		 	
+		 	*param_var << bias.subVector(0,6).toString().c_str();
+	 		*param_var << "\n";
+		 }
 	}
 
 }
@@ -345,20 +427,13 @@ bool Learning::respond(const Bottle& command, Bottle& reply) {
 
     	//retreiving readings information
     	Vector dof(arm->getDOF());
-    	Vector bias(16, 0.0);
     	Vector offsets(16, 0.0);
 
     	//u_est[5] = 0.0;
     	offsets.setSubvector(0, u_est);
 
     	
-    	bias[0] = 11.0; //0.1919
-    	bias[1] = -11.0; //-0.1919
-    	bias[2] = 7.0; // 0.122
-    	bias[3] = 17.0; //0.2965
-    	bias[4] = 7.0; // 0.122
-    	bias[5] = 17.0; //0.2965
-    	bias[6] = -7.0; //-0.122
+
 
 	   	//printf("torso dof are: \n(%s)\n", command.get(1).asList()->toString().c_str());
 
@@ -367,6 +442,10 @@ bool Learning::respond(const Bottle& command, Bottle& reply) {
     	aux = command.get(1).asList()->write(torso_encoders, true);
     	aux = aux && command.get(2).asList()->write(arm_encoders,true);
 		printf("Real arm_encoders are: \n(%s)\n\n", arm_encoders.toString().c_str());
+
+		////////////////////////////////////////////////////////////////////////////////////////
+		// Vector original_arm_encoders = arm_encoders;
+		////////////////////////////////////////////////////////////////////////////////////////
 
     	arm_encoders = arm_encoders + bias + offsets*(180.0/M_PI);
 		printf("Biased arm_encoders are: \n(%s)\n\n", arm_encoders.toString().c_str());
@@ -405,6 +484,61 @@ bool Learning::respond(const Bottle& command, Bottle& reply) {
     	printf("tip position is: \n(%s)\n\n", left_index_position.toString().c_str());
 
 
+    	////////////////////////////////////////////////////////////////////////////////////////
+    	//Next set of functions aim to compute the end-effector position metrics. Comment them for normal operation
+  //   	Vector u_est_final(16, 0.0);
+
+  //   	u_est_final[0] =   -0.1219;
+  //   	u_est_final[1] =    0.1478; 
+  //   	u_est_final[2] =   -0.1658;
+  //   	u_est_final[3] =   -0.2901; 
+  //   	u_est_final[4] =   -0.0658;
+  //   	u_est_final[5] =   -0.2583; 
+  //   	u_est_final[6] =    0.1445;
+
+
+  //   	Vector total_encoders_original = cat(torso_encoders, original_arm_encoders);
+	 //   	//printf("dof are: \n(%s)\n", total_encoders.toString().c_str());
+
+	 //   	Vector dof_original = total_encoders_original.subVector(0,9);
+		// Matrix H_real = arm->getH(dof_original * (M_PI/180.0));
+
+  //   	Vector left_index_position_real(4, 0.0);
+  //   	left_index_position_real = H_real*tipFrame;
+  //   	//printf("tip position is: \n(%s)\n", left_index_position.toString().c_str());
+
+  //       left_index_position_real.resize(3);
+  //   	printf("tip position (real) is: \n(%s)\n\n", left_index_position_real.toString().c_str());
+  //   	Vector aaa = zeros(2);
+  //   	aaa[0] = dot(left_index_position_real, n_vector) - distance;
+  //   	printf("[Learning_info] Error array is: \n(%s)\n\n", aaa.toString().c_str());
+
+  //   	Vector arm_encoders_final = arm_encoders + u_est_final*(180.0/M_PI);
+  //   	Vector total_encoders_final = cat(torso_encoders, arm_encoders_final);
+	 //   	//printf("dof are: \n(%s)\n", total_encoders.toString().c_str());
+
+	 //   	Vector dof_final = total_encoders_final.subVector(0,9);
+		// Matrix H_final = arm->getH(dof_final * (M_PI/180.0));
+
+		// Vector left_index_position_final(4, 0.0);
+		// left_index_position_final = H_final*tipFrame;
+  //   	//printf("tip position is: \n(%s)\n", left_index_position.toString().c_str());
+
+  //       left_index_position_final.resize(3);
+  //   	printf("tip position (final) is: \n(%s)\n\n", left_index_position_final.toString().c_str());
+  //   	aaa[0] = dot(left_index_position_final, n_vector) - distance;
+  //   	printf("[Learning_info] Error array is: \n(%s)\n\n", aaa.toString().c_str());
+
+  //   	double cart_err;
+  //   	cart_err = sqrt(pow((left_index_position_real[0] - left_index_position[0]),2)+pow((left_index_position_real[1] - left_index_position[1]),2)+pow((left_index_position_real[2] - left_index_position[2]),2));
+  //   	printf("[Learning_info] Initial cartesian error value is: \n%f\n\n", cart_err);
+    	
+
+  //   	cart_err = sqrt(pow((left_index_position_real[0] - left_index_position_final[0]),2)+pow((left_index_position_real[1] - left_index_position_final[1]),2)+pow((left_index_position_real[2] - left_index_position_final[2]),2));
+  //   	printf("[Learning_info] Final cartesian error value is: \n%f\n\n", cart_err);
+
+    	////////////////////////////////////////////////////////////////////////////////////////
+
 
     	//Reading error (Expected vs obtained)
         
@@ -441,6 +575,12 @@ bool Learning::respond(const Bottle& command, Bottle& reply) {
 
 
         reading_t ++;
+
+        //if ( (reading_t > 10) && (reading_t%2 == 0) && param == "slow"){
+        if ( (reading_t >= 10) && (reading_t%15 == 0) && param == "slow"){
+        //if ( param == "slow"){
+        	slowlyVaryingParams();
+        }
 
         printf("[Learning_info] Iteration number: %d\n\n", reading_t);
 
@@ -481,6 +621,52 @@ bool Learning::close() {
 	commandPort.close();
 	commandSensorsPort.close();
 	myfile->close();
+
+	if(param == "slow"){
+		param_var->close();
+	}
+
+	return true;
+}
+
+bool Learning::defineBias(void){
+
+	//bias[0] = -5.0; //-0.087
+	//bias[1] = 7.0; //0.122
+	//bias[2] = -10.0; // -0.174
+	//bias[3] = 7.0; //0.122
+	//bias[4] = 6.0; // 0.105
+	//bias[5] = -8.0; //-0.139
+	//bias[6] = 9.0; //0.157
+
+	bias[0] = 11.0; //0.1919
+	bias[1] = -11.0; //-0.1919
+	bias[2] = 7.0; // 0.122
+	bias[3] = 17.0; //0.2965
+	bias[4] = 7.0; // 0.122
+	bias[5] = 17.0; //0.2965
+	bias[6] = -7.0; //-0.122
+
+	
+	//bias[0] = -17.0; //-0.2965
+	//bias[1] = 11.0; //0.1919
+	//bias[2] = -22.0; //-0.383
+	//bias[3] = 10.0; //0.174
+	//bias[4] = 17.0; // 0.2965
+	//bias[5] = 17.0; //0.2965
+	//bias[6] = -11.0; //-0.1919
+
+	//bias[0] =   11.8736;
+	//bias[1] =  -12.9875;
+	//bias[2] =    5.5052;
+	//bias[3] =   14.7112;
+	//bias[4] =    7.7504;
+	//bias[5] =   18.2761;
+	//bias[6] =   -6.4178;
+
+			 	 		 	
+
+
 	return true;
 }
 
@@ -514,6 +700,21 @@ bool Learning::askNewSurface (void){
 	commandSensorsPort.close();
 
     return true;
+}
+
+bool Learning::slowlyVaryingParams (void){
+
+	for(int i = 0; i< 7 ; i++)
+	{
+		bias[i]+= (double)rand()/(RAND_MAX)*(6)-3;
+		//bias[i]+= (double)rand()/(RAND_MAX)*(0.3);
+		//bias[i]+= (double)rand()/(RAND_MAX)*(2)-1;
+		//printf("%f\t", motor_babbling[i]);
+	}
+
+
+	printf("Offsets will vary by. New true bias is\n: %s \n\n", bias.toString().c_str());
+	return true;
 }
 
 int main(int argc, char * argv[])

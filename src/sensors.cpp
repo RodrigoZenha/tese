@@ -204,7 +204,7 @@ void Sensors::sendSurface1 (void){
     printf("[sensors_info] Sending \"surface\" signal to learning module.\n\n");
     commandLearningPort.write(output);
 
-    surfaceflag = 0;
+    surfaceflag = 1;
 
     return;
 }

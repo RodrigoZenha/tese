@@ -36,6 +36,7 @@ bool Controller::configure(yarp::os::ResourceFinder &rf) {
 
     stopFlag = false;
     startControlFlag = false;
+    waitFlag = false;
     environmentflag = 0; //define environment to create on simulation
 
 
@@ -273,6 +274,11 @@ bool Controller::updateModule() {
 		printf("No surface detect by sensors \n");
 		return true;
 	}
+	if (waitFlag == true){
+
+		printf("Waiting for learning \n");
+		return true;
+	}
 
 
 	//Check if stopFlag is active and send encoders readings to learning module
@@ -468,6 +474,18 @@ bool Controller::respond(const Bottle& command, Bottle& reply) {
 
     	
     	stopFlag = true;
+
+    }else if (command.get(0).asString()=="wait"){
+    	printf("[controller_info] Received a wait flag.\n");
+
+    	
+    	waitFlag = true;
+
+    }else if (command.get(0).asString()=="resume"){
+    	printf("[controller_info] Received a stop signal.\n");
+
+    	
+    	waitFlag = false;
 
     }else if (command.get(0).asString()=="surface"){
 
@@ -675,7 +693,7 @@ void Controller::setWorldEnvironment1 (void){
 	world_port.write(cmd,response);
 	printf("[rpc] Got response: %s\n\n", response.toString().c_str());
 
-	environmentflag = 0;
+	environmentflag = 1;
 
 	// world mk sbox 1 0.001 0.7 0 0.7476 0.374 1 0 0
 	//world rot sbox 1 -45 0 0

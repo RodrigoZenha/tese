@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <cmath>
 #include <fstream>
+#include <sstream>
 
 #include <yarp/os/Network.h>
 #include <yarp/os/LogStream.h>
@@ -54,8 +55,11 @@ public:
     */
     virtual bool interruptModule();
 
+    virtual bool defineBias(void);
+
     virtual bool askNewSurface (void);
 
+    virtual bool slowlyVaryingParams (void);
     /*
     * Close function, to perform cleanup.
     */
@@ -71,6 +75,7 @@ private:
 	std::string entropy; //random or active
 	std::string type; //Batch or Online
 	std::string aw; //on or off
+	std::string param; //fixed or slow (varying)
 
 
 	iCub::iKin::iCubArm * arm;
@@ -82,6 +87,7 @@ private:
 	int reading;  
 	int reading_t;  
 	int current_reading;
+	int experiment;
 
 	bool startControlFlag;
 
@@ -114,5 +120,8 @@ private:
     Vector joints;
 
     std::ofstream * myfile;
+    std::ofstream * param_var;
+
+    Vector bias;
 
 };

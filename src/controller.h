@@ -124,6 +124,7 @@ private:
     yarp::os::RpcClient commandLearningPort;
 
     bool stopFlag;
+    bool waitFlag;
     bool startControlFlag;
 
     Vector motor_babbling;
